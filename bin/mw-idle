@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# mw:summary=Turn idle locking on or off for this session
+# mw:args=on | off | toggle | status [--json]
+# mw:examples=mw-idle toggle | mw-idle status --json
+#
+# Idle watching lives in the shell (Quickshell's IdleMonitor), so this only
+# flips a flag the shell reads — there is no hypridle process to manage.
+set -euo pipefail
+
+case "${1-toggle}" in
+  on|off|toggle) qs -c mw ipc call idle "$1" ;;
+  status)
+    if [[ "${2-}" == "--json" ]]; then
+      jq -nc --argjson e "$(qs -c mw ipc call idle enabled)" '{enabled:$e}'
+    else
+      qs -c mw ipc call idle enabled
+    fi
+    ;;
+  *) echo "mw-idle: unknown subcommand: $1" >&2; exit 1 ;;
+esac

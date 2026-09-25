@@ -1,0 +1,37 @@
+{
+  "name": "Gruvbox Green",
+  "dark": true,
+
+  "bg": "#232e1b",
+  "bgAlt": "#1c2415",
+  "surface": "#2d3a22",
+  "overlay": "#425433",
+  "fg": "#ebdbb2",
+  "fgDim": "#a89984",
+  "accent": "#b8bb26",
+  "accentAlt": "#8ec07c",
+  "red": "#fb4934",
+  "orange": "#fe8019",
+  "yellow": "#fabd2f",
+  "green": "#b8bb26",
+  "cyan": "#8ec07c",
+  "blue": "#83a598",
+  "magenta": "#d3869b",
+
+  "ramp": {
+    "bg0": "#1c2415", "bg1": "#232e1b", "bg2": "#2d3a22", "bg3": "#354529",
+    "bg4": "#425433", "bg5": "#5a6f4a", "bg6": "#687e57",
+
+    "fg0": "#fbf1c7", "fg1": "#ebdbb2", "fg2": "#d5c4a1", "fg3": "#bdae93",
+    "fg4": "#a89984", "fg5": "#928374", "fg6": "#7c6f64",
+
+    "selection": "#425433", "selectionText": "#fbf1c7",
+    "green": "#b8bb26", "greenDim": "#98971a", "greenLo": "#79740e", "greenHi": "#d5d65a",
+    "aqua": "#8ec07c", "aquaHi": "#aed49f", "aquaLo": "#689d6a", "aquaDeep": "#4d7a4f",
+    "red": "#fb4934", "redDim": "#cc241d", "redHi": "#fe8a7d",
+    "yellow": "#fabd2f", "yellowDim": "#d79921",
+    "orange": "#fe8019", "orangeDim": "#d65d0e",
+    "blue": "#83a598", "blueDim": "#458588",
+    "purple": "#d3869b", "purpleDim": "#b16286"
+  }
+}

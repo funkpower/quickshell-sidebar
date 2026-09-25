@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# mw:summary=Composite window actions that need more than one dispatcher
+# mw:args=pop | unpin | pinned | gaps | center | move <l|r|u|d> | back | front | see-through [value] | info [--json]
+# mw:examples=mw-window pop | mw-window see-through | mw-window see-through 0.5
+set -euo pipefail
+
+state="${XDG_STATE_HOME:-$HOME/.local/state}/mw"
+mkdir -p "$state"
+
+case "${1-info}" in
+  pop)
+    # Float, centre and pin — "get this out of the tiling and keep it on top".
+    # Pressing it again puts the window back, because a pinned window shows on
+    # EVERY workspace and without a way back that is baffling rather than
+    # useful.
+    #
+    # Hyprland 0.56 parses hyprctl dispatch as Lua: the argument is wrapped as
+    # hl.dispatch(<arg>), so it has to be a real dispatcher expression. The old
+    # "dispatch setfloating active" form is a syntax error, not a no-op.
+    if [[ "$(hyprctl activewindow -j | jq -r '.pinned')" == "true" ]]; then
+      hyprctl dispatch "hl.dsp.window.pin()" >/dev/null
+      hyprctl dispatch "hl.dsp.window.float({ action = 'disable' })" >/dev/null
+    else
+      hyprctl dispatch "hl.dsp.window.float({ action = 'enable' })" >/dev/null
+      hyprctl dispatch "hl.dsp.window.center()" >/dev/null
+      hyprctl dispatch "hl.dsp.window.pin()" >/dev/null
+    fi
+    ;;
+
+  unpin)
+    hyprctl dispatch "hl.dsp.window.pin()" >/dev/null
+    ;;
+
+  pinned)
+    hyprctl clients -j | jq -r '.[] | select(.pinned) | "\(.class)\t\(.title)"'
+    ;;
+
+  gaps)
+    # Toggle between the configured gaps and none, remembering which way round
+    # we are so the state survives a reload.
+    # `hyprctl keyword` does not work under the Lua parser at all — it answers
+    # "keyword can't work with non-legacy parsers. Use eval." So set config
+    # through eval, and reload to put the file's values back.
+    if [[ -e "$state/gaps-off" ]]; then
+      hyprctl reload >/dev/null
+      /bin/rm -f "$state/gaps-off"
+    else
+      hyprctl eval "hl.config({ general = { gaps_in = 0, gaps_out = 0 }, decoration = { rounding = 0 } })" >/dev/null
+      : > "$state/gaps-off"
+    fi
+    ;;
+
+  center)
+    hyprctl dispatch "hl.dsp.window.center()" >/dev/null
+    ;;
+
+  move)
+    # One key for "move this window that way", whichever kind it is: tiled
+    # windows swap with their neighbour, floating ones get nudged, because
+    # swapping a floating window does nothing at all.
+    dir="${2:?direction required: l r u d}"
+    step="${MW_NUDGE_STEP:-80}"
+    if [[ "$(hyprctl activewindow -j | jq -r '.floating')" == "true" ]]; then
+      case "$dir" in
+        l) hyprctl dispatch "hl.dsp.window.move({ x = -$step, y = 0, relative = true })" >/dev/null ;;
+        r) hyprctl dispatch "hl.dsp.window.move({ x = $step, y = 0, relative = true })"  >/dev/null ;;
+        u) hyprctl dispatch "hl.dsp.window.move({ x = 0, y = -$step, relative = true })" >/dev/null ;;
+        d) hyprctl dispatch "hl.dsp.window.move({ x = 0, y = $step, relative = true })"  >/dev/null ;;
+        *) echo "mw-window: direction must be l, r, u or d" >&2; exit 1 ;;
+      esac
+    else
+      hyprctl dispatch "hl.dsp.window.swap({ direction = '$dir' })" >/dev/null
+    fi
+    ;;
+
+  back|front)
+    # Reorders the active window AMONG THE OTHER FLOATING WINDOWS. It cannot
+    # put a floating window behind a tiled one — Hyprland renders all floating
+    # windows above all tiled ones and the wiki says so explicitly of
+    # alterzorder: "this cannot be used to move a floating window behind a
+    # tiled one". If that is what you want, see `see-through` or untile it
+    # with SUPER+T.
+    mode=bottom; [[ "$1" == front ]] && mode=top
+    n="$(hyprctl clients -j | jq --argjson ws "$(hyprctl activeworkspace -j | jq .id)" \
+          '[.[] | select(.floating and .workspace.id == $ws)] | length')"
+    if [[ "${n:-0}" -lt 2 ]]; then
+      echo "only one floating window here — nothing to reorder." >&2
+      echo "floating windows always draw above tiled ones in Hyprland; try:" >&2
+      echo "  mw-window see-through    make it translucent instead" >&2
+      echo "  SUPER+T                  untile it so it stops overlapping" >&2
+      exit 1
+    fi
+    hyprctl dispatch "hl.dsp.window.alter_zorder({ mode = '$mode' })" >/dev/null
+    ;;
+
+  see-through|opacity)
+    # The practical answer to "this floating window blocks what is behind it",
+    # given the compositor will not put it behind. Toggles, or takes a value.
+    state="${XDG_STATE_HOME:-$HOME/.local/state}/mw"
+    mkdir -p "$state"
+    addr="$(hyprctl activewindow -j | jq -r '.address')"
+    [[ "$addr" != "null" ]] || { echo "mw-window: no focused window" >&2; exit 1; }
+    marker="$state/opacity-$addr"
+    if [[ -n "${2-}" ]]; then
+      value="$2"
+    elif [[ -e "$marker" ]]; then
+      value=1.0; rm -f "$marker"
+    else
+      value="${MW_SEE_THROUGH:-0.72}"; : > "$marker"
+    fi
+    hyprctl dispatch "hl.dsp.window.set_prop({ prop = 'opacity', value = $value, window = 'address:$addr' })" >/dev/null
+    echo "$value"
+    ;;
+
+  info)
+    if [[ "${2-}" == "--json" ]]; then
+      hyprctl activewindow -j
+    else
+      hyprctl activewindow -j | jq -r '"\(.class)\n  title:     \(.title)\n  workspace: \(.workspace.name)\n  size:      \(.size[0])x\(.size[1])\n  floating:  \(.floating)\n  xwayland:  \(.xwayland)"'
+    fi
+    ;;
+
+  *) echo "mw-window: unknown subcommand: $1" >&2; exit 1 ;;
+esac

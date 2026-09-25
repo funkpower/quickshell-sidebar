@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# mw:summary=List, show or switch the shell theme
+# mw:args=list [--json] | current | set <name> | menu
+# mw:examples=mw-theme list | mw-theme set gruvbox | mw-theme menu
+#
+# A theme is a directory holding a colors.json. Switching repoints one symlink,
+# ~/.config/mw-theme, and tells the shell to re-read it.
+set -euo pipefail
+
+themes_dir="${MW_THEMES_DIR:-$HOME/.config/quickshell/mw/themes}"
+link="$HOME/.config/mw-theme"
+
+names() {
+  find "$themes_dir" -mindepth 2 -maxdepth 2 -name colors.json -printf '%h\n' \
+    | xargs -r -n1 basename | sort
+}
+current() { basename "$(readlink -f "$link" 2>/dev/null || echo none)"; }
+
+case "${1-current}" in
+  list)
+    if [[ "${2-}" == "--json" ]]; then
+      names | jq -Rn --arg cur "$(current)" '[inputs] | map({name:., current:(. == $cur)})'
+    else
+      cur="$(current)"
+      names | while read -r n; do
+        [[ "$n" == "$cur" ]] && printf '* %s\n' "$n" || printf '  %s\n' "$n"
+      done
+    fi
+    ;;
+
+  current) current ;;
+
+  set)
+    name="${2:?theme name required}"
+    [[ -f "$themes_dir/$name/colors.json" ]] || { echo "mw-theme: no such theme: $name" >&2; exit 1; }
+    ln -sfn "$themes_dir/$name" "$link"
+    qs -c mw ipc call theme reload >/dev/null 2>&1 || true
+    command -v notify-send >/dev/null && notify-send -a mw "Theme" "$name" || true
+    echo "$name"
+    ;;
+
+  menu)
+    choice="$(names | sed 's/^/&\t/' | mw-menu pick "Theme")" || exit 0
+    [[ -n "$choice" ]] && exec "$0" set "$(cut -f1 <<<"$choice")"
+    ;;
+
+  *) echo "mw-theme: unknown subcommand: $1" >&2; exit 1 ;;
+esac

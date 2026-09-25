@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# mw:summary=Find any open window and jump to it
+# mw:args=[--json]
+# mw:examples=mw-windows | mw-windows --json
+#
+# Lists every window with the workspace it is on; picking one focuses it,
+# switching workspace if it has to.
+set -euo pipefail
+
+[[ -n "${HYPRLAND_INSTANCE_SIGNATURE-}" ]] || { echo "mw-windows: no Hyprland session" >&2; exit 1; }
+
+if [[ "${1-}" == "--json" ]]; then
+  hyprctl clients -j | jq '[ .[] | select(.mapped and .title != "")
+    | { address, class, title, workspace: .workspace.name } ]'
+  exit 0
+fi
+
+# address \t title \t class \t "workspace · class" \t workspace id
+# The picker renders field 2 as the row, resolves field 3 to an icon and shows
+# field 4 under the title. Field 5 is only for sorting.
+rows="$(hyprctl clients -j | jq -r '
+  .[]
+  | select(.mapped and .title != "" and .class != "xwaylandvideobridge")
+  | [ .address,
+      (.title | if length > 70 then .[0:67] + "..." else . end),
+      (.initialClass // .class // ""),
+      ("Workspace " + .workspace.name + "  ·  " + (.class // "?")),
+      (.workspace.id | tostring)
+    ] | @tsv' | sort -t$'\t' -k5,5n -k2,2V)"
+[[ -n "$rows" ]] || { echo "no windows open" >&2; exit 0; }
+
+choice="$(printf '%s\n' "$rows" | mw-menu pick "Find a window")" || exit 0
+[[ -n "$choice" ]] || exit 0
+
+hyprctl dispatch "hl.dsp.focus({ window = 'address:$choice' })" >/dev/null

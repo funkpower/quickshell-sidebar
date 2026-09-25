@@ -1,0 +1,19 @@
+{
+  "name": "Cachy",
+  "dark": true,
+  "bg": "#111826",
+  "bgAlt": "#0d131f",
+  "surface": "#182545",
+  "overlay": "#1f3057",
+  "fg": "#ffffff",
+  "fgDim": "#798bb2",
+  "accent": "#82dccc",
+  "accentAlt": "#00aa84",
+  "red": "#ff6b81",
+  "orange": "#ffa14a",
+  "yellow": "#ffd166",
+  "green": "#00aa84",
+  "cyan": "#82dccc",
+  "blue": "#01ccff",
+  "magenta": "#b48ead"
+}

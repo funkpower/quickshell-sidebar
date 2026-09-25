@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# mw:summary=Drive the shell overlay: menus, launcher, pickers, prompts
+# mw:args=toggle <route> | open <route> | close | routes | pick <title> | input <title> | show <title>
+# mw:examples=mw-menu toggle system | printf 'a\tApple\n' | mw-menu pick Fruit | mw-menu input Name
+#
+# Thin wrapper over the shell's IPC surface. Every UI action goes through here,
+# which is what lets a script open a menu or answer a prompt without
+# synthesising a single keystroke.
+#
+# `pick` and `input` have to block until a human chooses, and an IPC call
+# cannot wait — so they hand the shell a FIFO to write the answer to and read
+# it back here. Closing the overlay writes an empty line, so nothing hangs.
+set -euo pipefail
+
+running() { qs -c mw ipc call shell ping >/dev/null 2>&1; }
+
+if ! running; then
+  echo "mw-menu: the shell (qs -c mw) is not running." >&2
+  exit 1
+fi
+
+blocking() {
+  local fn="$1" title="$2" payload="${3-}"
+  local dir fifo
+  dir="$(mktemp -d)"
+  fifo="$dir/reply"
+  mkfifo "$fifo"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$dir'" EXIT
+
+  if [[ "$fn" == "pick" ]]; then
+    qs -c mw ipc call picker pick "$title" "$payload" "$fifo" >/dev/null
+  else
+    qs -c mw ipc call picker input "$title" "$fifo" >/dev/null
+  fi
+
+  cat "$fifo"
+}
+
+case "${1-toggle}" in
+  toggle) qs -c mw ipc call menu toggle "${2-root}" ;;
+  open)   qs -c mw ipc call menu open   "${2-root}" ;;
+  close)  qs -c mw ipc call menu close ;;
+  routes) qs -c mw ipc call menu routes ;;
+  pick)   blocking pick  "${2-Select}" "$(cat)" ;;
+  input)  blocking input "${2-Input}" ;;
+  show)   qs -c mw ipc call picker show "${2-Info}" "$(cat)" ;;
+  *) echo "mw-menu: unknown subcommand: $1" >&2; exit 1 ;;
+esac

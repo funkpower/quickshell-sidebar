@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# mw:summary=Lock the screen
+# mw:args=[--now]
+# mw:examples=mw-lock
+#
+# The lock surface is a Quickshell WlSessionLock backed by PAM, so there is no
+# hyprlock or swaylock involved.
+set -euo pipefail
+exec qs -c mw ipc call lock lock

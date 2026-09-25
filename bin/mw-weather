@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# mw:summary=Current conditions and forecast as JSON
+# mw:args=[--json] [--text] [--force] [--set-location "City, Region"]
+# mw:examples=mw-weather --text | mw-weather --set-location "Chicago, Illinois"
+#
+# Open-Meteo: free, no API key, and good data.
+# Location is resolved once by IP and cached; override it with
+# --set-location if the IP guess is wrong, which it often is on a VPN.
+#
+# Cached for 15 minutes. The bar and the sidebar both read this one file rather
+# than each hitting the network.
+set -euo pipefail
+
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/mw"
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/mw"
+mkdir -p "$cache_dir" "$state_dir"
+cache="$cache_dir/weather.json"
+loc_file="$state_dir/weather-location"
+ttl=900
+units="${MW_WEATHER_UNITS:-fahrenheit}"
+wind_units="${MW_WEATHER_WIND:-mph}"
+
+# WMO weather codes -> a label and a Nerd Font glyph.
+code_map() {
+  case "$1" in
+    0)        echo "Clear|󰖙" ;;
+    1)        echo "Mainly clear|󰖕" ;;
+    2)        echo "Partly cloudy|󰖕" ;;
+    3)        echo "Overcast|󰖐" ;;
+    45|48)    echo "Fog|󰖑" ;;
+    51|53|55) echo "Drizzle|󰖗" ;;
+    56|57)    echo "Freezing drizzle|󰙿" ;;
+    61|63|65) echo "Rain|󰖖" ;;
+    66|67)    echo "Freezing rain|󰙿" ;;
+    71|73|75) echo "Snow|󰖘" ;;
+    77)       echo "Snow grains|󰖘" ;;
+    80|81|82) echo "Showers|󰖖" ;;
+    85|86)    echo "Snow showers|󰖘" ;;
+    95)       echo "Thunderstorm|󰙾" ;;
+    96|99)    echo "Thunderstorm, hail|󰙾" ;;
+    *)        echo "Unknown|󰖙" ;;
+  esac
+}
+
+resolve_location() {
+  # "lat lon label" on one line.
+  if [[ -s "$loc_file" ]]; then cat "$loc_file"; return; fi
+  local j
+  j="$(curl -fsS --max-time 8 "https://ipapi.co/json/" 2>/dev/null)" || return 1
+  jq -r '"\(.latitude) \(.longitude) \(.city), \(.region_code)"' <<<"$j" | tee "$loc_file"
+}
+
+set_location() {
+  local q="$1" j
+  j="$(curl -fsS --max-time 8 --get --data-urlencode "name=$q" \
+        "https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&format=json")" || {
+    echo "mw-weather: geocoding lookup failed" >&2; exit 1; }
+  if [[ "$(jq -r '.results // empty | length' <<<"$j")" != "1" ]]; then
+    echo "mw-weather: no place matched \"$q\"" >&2; exit 1
+  fi
+  jq -r '.results[0] | "\(.latitude) \(.longitude) \(.name), \(.admin1 // .country_code)"' <<<"$j" > "$loc_file"
+  rm -f "$cache"
+  cat "$loc_file"
+}
+
+fetch() {
+  local lat lon label
+  read -r lat lon label <<<"$(resolve_location)" || {
+    jq -nc '{available:false, reason:"could not determine a location"}' > "$cache"; return; }
+
+  local j
+  j="$(curl -fsS --max-time 10 "https://api.open-meteo.com/v1/forecast\
+?latitude=$lat&longitude=$lon\
+&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code,is_day\
+&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max\
+&timezone=auto&forecast_days=5&temperature_unit=$units&wind_speed_unit=$wind_units")" || {
+    jq -nc --arg l "$label" '{available:false, reason:"weather service unreachable", location:$l}' > "$cache"; return; }
+
+  local cur_code; cur_code="$(jq -r '.current.weather_code' <<<"$j")"
+  IFS='|' read -r cur_label cur_icon <<<"$(code_map "$cur_code")"
+
+  # Per-day labels have to be built out here; jq has no lookup table for them.
+  local days='[]'
+  local n; n="$(jq -r '.daily.time | length' <<<"$j")"
+  for ((i=0; i<n; i++)); do
+    local dcode dlabel dicon
+    dcode="$(jq -r ".daily.weather_code[$i]" <<<"$j")"
+    IFS='|' read -r dlabel dicon <<<"$(code_map "$dcode")"
+    days="$(jq -c \
+      --arg date  "$(jq -r ".daily.time[$i]" <<<"$j")" \
+      --arg label "$dlabel" --arg icon "$dicon" \
+      --argjson hi "$(jq -r ".daily.temperature_2m_max[$i]" <<<"$j")" \
+      --argjson lo "$(jq -r ".daily.temperature_2m_min[$i]" <<<"$j")" \
+      --argjson pop "$(jq -r ".daily.precipitation_probability_max[$i] // 0" <<<"$j")" \
+      '. + [{date:$date, label:$label, icon:$icon, high:($hi|round), low:($lo|round), precip:$pop}]' <<<"$days")"
+  done
+
+  jq -nc \
+    --arg label "$label" --arg cl "$cur_label" --arg ci "$cur_icon" \
+    --argjson t "$(jq -r '.current.temperature_2m' <<<"$j")" \
+    --argjson f "$(jq -r '.current.apparent_temperature' <<<"$j")" \
+    --argjson h "$(jq -r '.current.relative_humidity_2m' <<<"$j")" \
+    --argjson w "$(jq -r '.current.wind_speed_10m' <<<"$j")" \
+    --argjson day "$(jq -r '.current.is_day' <<<"$j")" \
+    --argjson days "$days" \
+    '{available:true, location:$label,
+      temp:($t|round), feelsLike:($f|round), humidity:$h, wind:($w|round),
+      label:$cl, icon:$ci, isDay:($day == 1), days:$days,
+      updated:(now|floor)}' > "$cache"
+}
+
+case "${1-}" in
+  --set-location) set_location "${2:?a place name is required}"; exit 0 ;;
+esac
+
+force=0; mode=json
+for a in "$@"; do case "$a" in --force) force=1 ;; --text) mode=text ;; --json) mode=json ;; esac; done
+
+if [[ $force -eq 1 || ! -s "$cache" ]] || (( $(date +%s) - $(stat -c %Y "$cache") > ttl )); then
+  fetch
+fi
+
+if [[ "$mode" == json ]]; then
+  cat "$cache"
+else
+  jq -r 'if .available | not then "Weather unavailable: \(.reason)"
+         else
+           "\(.icon)  \(.temp)°  \(.label)   —  \(.location)",
+           "    feels \(.feelsLike)°   wind \(.wind)   humidity \(.humidity)%",
+           "",
+           (.days[] | "    \(.date)  \(.icon)  \(.high)° / \(.low)°   \(.precip)% precip  \(.label)")
+         end' "$cache"
+fi

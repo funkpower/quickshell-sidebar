@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# mw:summary=Toggle the blue-light filter (hyprsunset)
+# mw:args=on | off | toggle | restore | auto [--force] | status [--json] | temp <kelvin>
+# mw:examples=mw-nightlight toggle | mw-nightlight auto | mw-nightlight temp 3500
+set -euo pipefail
+
+state="${XDG_STATE_HOME:-$HOME/.local/state}/mw"
+mkdir -p "$state"
+file="$state/nightlight"
+auto_file="$state/nightlight-auto"
+temp="${MW_NIGHTLIGHT_TEMP:-4000}"
+
+running() { pgrep -x hyprsunset >/dev/null 2>&1; }
+
+start() {
+  if ! running; then
+    if command -v uwsm >/dev/null; then uwsm app -- hyprsunset -t "${1:-$temp}" >/dev/null 2>&1 &
+    else hyprsunset -t "${1:-$temp}" >/dev/null 2>&1 & fi
+  fi
+  printf 'on %s\n' "${1:-$temp}" > "$file"
+}
+stop() {
+  pkill -x hyprsunset 2>/dev/null || true
+  printf 'off\n' > "$file"
+}
+
+case "${1-toggle}" in
+  on)     start ;;
+  off)    stop ;;
+  toggle) if running; then stop; else start; fi ;;
+  temp)   [[ "${2-}" =~ ^[0-9]+$ ]] || { echo "mw-nightlight: temp needs kelvin" >&2; exit 1; }
+          stop; start "$2" ;;
+  restore)
+    # Called at session start: bring back whatever was set last, without
+    # forcing the filter on for a fresh login.
+    [[ -s "$file" ]] || exit 0
+    read -r want saved_temp < "$file" || true
+    [[ "$want" == "on" ]] && start "${saved_temp:-$temp}" || true
+    ;;
+  auto)
+    # Dusk and dawn come from mw-sun, which computes civil twilight for this
+    # machine's location. Set MW_NIGHTLIGHT_ALTITUDE to move the trigger: 0 is
+    # sunset itself, -12 is nautical twilight and noticeably later.
+    want="$(mw-sun --json --altitude "${MW_NIGHTLIGHT_ALTITUDE:--6}" \
+            | jq -r 'if .night then "night" else "day" end')" || exit 1
+    last="$(cat "$auto_file" 2>/dev/null || true)"
+
+    # Only ever acts on a transition. Turn the filter off by hand at 10pm and
+    # it stays off — otherwise this would switch it back on five minutes later
+    # and keep doing it all night. Dawn takes over again.
+    if [[ "${2-}" == "--force" || "$want" != "$last" ]]; then
+      if [[ "$want" == "night" ]]; then start; else stop; fi
+      printf '%s\n' "$want" > "$auto_file"
+      echo "$want"
+    else
+      echo "$want (no change)"
+    fi
+    ;;
+
+  status)
+    if [[ "${2-}" == "--json" ]]; then
+      jq -nc --argjson on "$(running && echo true || echo false)" \
+             --argjson t "$temp" '{enabled:$on, temperature:$t}'
+    else
+      running && echo "on" || echo "off"
+    fi
+    ;;
+  *) echo "mw-nightlight: unknown subcommand: $1" >&2; exit 1 ;;
+esac

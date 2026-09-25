@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# mw:summary=Toggle the sidebar control centre
+# mw:args=[toggle|open|close|shown]
+# mw:examples=mw-sidebar | mw-sidebar close
+set -euo pipefail
+exec qs -c mw ipc call sidebar "${1-toggle}"

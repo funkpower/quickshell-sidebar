@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# mw:summary=End the session, suspend, reboot or power off
+# mw:args=logout | suspend | hibernate | reboot | poweroff | lock
+# mw:examples=mw-session logout | mw-session suspend
+set -euo pipefail
+
+case "${1:?one of: logout suspend hibernate reboot poweroff lock}" in
+  logout)    uwsm stop 2>/dev/null || hyprctl dispatch "hl.dsp.exit()" ;;
+  lock)      mw-lock ;;
+  suspend)   mw-lock; systemctl suspend ;;
+  hibernate) mw-lock; systemctl hibernate ;;
+  reboot)    systemctl reboot ;;
+  poweroff)  systemctl poweroff ;;
+  *) echo "mw-session: unknown action: $1" >&2; exit 1 ;;
+esac

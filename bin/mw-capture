@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# mw:summary=Screenshots, screen recording, colour picking and OCR
+# mw:args=region | screen | window | record | colour | text
+# mw:examples=mw-capture region | mw-capture record | mw-capture text
+set -euo pipefail
+
+shots="${XDG_PICTURES_DIR:-$HOME/Pictures}/Screenshots"
+videos="${XDG_VIDEOS_DIR:-$HOME/Videos}/Recordings"
+stamp() { date +%Y-%m-%d_%H-%M-%S; }
+notify() { command -v notify-send >/dev/null && notify-send -a mw "$@" || true; }
+
+active_geometry() {
+  hyprctl activewindow -j \
+    | jq -r '"\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"'
+}
+
+focused_output() {
+  hyprctl monitors -j | jq -r '.[] | select(.focused) | .name'
+}
+
+case "${1-region}" in
+  region)
+    mkdir -p "$shots"; out="$shots/$(stamp).png"
+    geom="$(slurp -d)" || exit 0
+    grim -g "$geom" - | satty --filename - --output-filename "$out" --early-exit --copy-command wl-copy
+    notify "Screenshot" "Region copied and saved"
+    ;;
+  screen)
+    mkdir -p "$shots"; out="$shots/$(stamp).png"
+    grim -o "$(focused_output)" - | satty --filename - --output-filename "$out" --early-exit --copy-command wl-copy
+    notify "Screenshot" "Screen copied and saved"
+    ;;
+  window)
+    mkdir -p "$shots"; out="$shots/$(stamp).png"
+    grim -g "$(active_geometry)" - | satty --filename - --output-filename "$out" --early-exit --copy-command wl-copy
+    notify "Screenshot" "Window copied and saved"
+    ;;
+  record)
+    mkdir -p "$videos"
+    if pkill -SIGINT -x gpu-screen-recorder 2>/dev/null; then
+      notify "Recording" "Stopped"
+      exit 0
+    fi
+    out="$videos/$(stamp).mp4"
+    gpu-screen-recorder -w "$(focused_output)" -f 60 -a default_output -o "$out" &
+    notify "Recording" "Started"
+    ;;
+  colour|color)
+    hex="$(hyprpicker -a -f hex)" || exit 0
+    notify "Colour picked" "$hex"
+    ;;
+  text)
+    command -v tesseract >/dev/null || { notify "OCR unavailable" "tesseract is not installed"; exit 1; }
+    geom="$(slurp -d)" || exit 0
+    grim -g "$geom" - | tesseract - - 2>/dev/null | wl-copy
+    notify "Text extracted" "Copied to the clipboard"
+    ;;
+  *) echo "mw-capture: unknown mode: $1" >&2; exit 1 ;;
+esac

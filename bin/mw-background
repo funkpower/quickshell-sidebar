@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# mw:summary=Set or cycle the desktop wallpaper
+# mw:args=next | prev | set <path> | current | list
+# mw:examples=mw-background next | mw-background set ~/Pictures/wall.png
+#
+# The wallpaper is drawn by the shell on a background layer, so this only
+# records the choice and tells the shell to re-read it.
+set -euo pipefail
+
+state="${XDG_STATE_HOME:-$HOME/.local/state}/mw"
+mkdir -p "$state"
+current="$state/background"
+# First directory that exists wins, so next/prev cycle the pictures you
+# actually keep rather than silently falling through to the stock set because
+# the directory is called Wallpaper and the default said Wallpapers.
+dir="${MW_WALLPAPER_DIR:-}"
+if [[ -z "$dir" || ! -d "$dir" ]]; then
+  for d in "$HOME/Pictures/Wallpaper" "$HOME/Pictures/Wallpapers" \
+           "$HOME/Pictures/wallpapers" /usr/share/wallpapers/cachyos-wallpapers; do
+    [[ -d "$d" ]] && { dir="$d"; break; }
+  done
+fi
+
+walls() { find -L "$dir" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' \) | sort; }
+
+apply() {
+  printf '%s\n' "$1" > "$current"
+  qs -c mw ipc call background reload >/dev/null 2>&1 || true
+}
+
+step() {
+  mapfile -t list < <(walls)
+  [[ ${#list[@]} -gt 0 ]] || { echo "mw-background: no wallpapers under $dir" >&2; exit 1; }
+  cur="$( [[ -s "$current" ]] && cat "$current" || echo '' )"
+  idx=-1
+  for i in "${!list[@]}"; do [[ "${list[$i]}" == "$cur" ]] && idx=$i; done
+  if [[ "$1" == next ]]; then n=$(( (idx + 1) % ${#list[@]} )); else n=$(( (idx - 1 + ${#list[@]}) % ${#list[@]} )); fi
+  apply "${list[$n]}"
+  echo "${list[$n]}"
+}
+
+case "${1-current}" in
+  next)    step next ;;
+  prev)    step prev ;;
+  set)     [[ -f "${2-}" ]] || { echo "mw-background: no such file: ${2-}" >&2; exit 1; }
+           apply "$(readlink -f "$2")"; echo "$2" ;;
+  current) [[ -s "$current" ]] && cat "$current" || walls | head -1 ;;
+  list)    walls ;;
+  *) echo "mw-background: unknown subcommand: $1" >&2; exit 1 ;;
+esac

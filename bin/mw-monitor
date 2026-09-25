@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# mw:summary=Inspect monitor layout and toggle HDR
+# mw:args=list [--json] | hdr on|off|toggle|status [<output>] [--json] | dpms on|off|status [<output>] | reload
+# mw:examples=mw-monitor list | mw-monitor hdr toggle DP-1
+#
+# HDR on a mixed HDR/SDR pair is Hyprland's roughest edge, so it is a runtime
+# toggle rather than something you have to edit a config and reload to try.
+set -euo pipefail
+
+# The HDR output: MW_HDR_OUTPUT if set, otherwise the focused monitor.
+hdr_output="${MW_HDR_OUTPUT:-$(hyprctl monitors -j 2>/dev/null | jq -r '.[] | select(.focused) | .name' | head -1)}"
+state="${XDG_STATE_HOME:-$HOME/.local/state}/mw"
+
+# Whatever mw-brightness sdr last set. Turning HDR off and on again used to
+# reset this to a hardcoded value and throw the tuned one away, so the screen
+# visibly changed brightness every time the toggle was used.
+saved_sdr() {
+  local v
+  v="$(head -1 "$state/sdrbrightness" 2>/dev/null || true)"
+  [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]] && echo "$v" || echo "1.6"
+}
+
+# `hyprctl keyword` is rejected outright under Hyprland 0.56's Lua parser, so
+# monitor changes go through eval with the same hl.monitor() call the config
+# uses.
+hdr_on() {
+  hyprctl eval "hl.monitor({ output = '$1', mode = 'highres@highrr', position = 'auto', scale = 1, bitdepth = 10, cm = 'hdr', sdrbrightness = $(saved_sdr), sdrsaturation = 1.0, vrr = 0 })"
+}
+hdr_off() {
+  hyprctl eval "hl.monitor({ output = '$1', mode = 'highres@highrr', position = 'auto', scale = 1, bitdepth = 8, cm = 'auto', vrr = 0 })"
+}
+
+# Hyprland exposes no cm or supportsHDR field on a monitor — currentFormat is
+# the only thing that moves. A 10-bit format is what bitdepth = 10 produces,
+# so it is the honest proxy for "HDR is on", and it is what the toggle below
+# has always branched on. This just says so in words instead of handing the
+# caller a pixel format to interpret.
+hdr_format() {
+  hyprctl monitors -j | jq -r --arg o "$1" '.[] | select(.name == $o) | (.currentFormat // "unknown")'
+}
+hdr_enabled() {
+  case "$(hdr_format "$1")" in *2101010*) return 0 ;; *) return 1 ;; esac
+}
+hdr_state() {
+  if [[ "${2-}" == "--json" ]]; then
+    jq -nc --arg o "$1" --arg f "$(hdr_format "$1")" \
+       --argjson e "$(hdr_enabled "$1" && echo true || echo false)" \
+       '{enabled: $e, output: $o, format: $f}'
+  else
+    hdr_enabled "$1" && echo on || echo off
+  fi
+}
+
+case "${1-list}" in
+  list)
+    if [[ "${2-}" == "--json" ]]; then
+      hyprctl monitors -j
+    else
+      hyprctl monitors -j | jq -r '.[] | "\(.name)  \(.width)x\(.height)@\(.refreshRate|floor)  at \(.x),\(.y)  scale \(.scale)  format=\(.currentFormat // "?")  vrr=\(.vrr)"'
+    fi
+    ;;
+  hdr)
+    out="${3:-}"; [[ -n "$out" ]] || out="$hdr_output"
+    case "${2-status}" in
+      on)     hdr_on "$out" ;;
+      off)    hdr_off "$out" ;;
+      status) hdr_state "$out" "${4-}" ;;
+      toggle) hdr_enabled "$out" && hdr_off "$out" || hdr_on "$out" ;;
+      *) echo "mw-monitor: unknown hdr action: $2" >&2; exit 1 ;;
+    esac
+    ;;
+  dpms)
+    # The argument shape is { enabled = bool } with an optional monitor. Not
+    # "off"/"on" as a string, and not { state = ... } — the dispatcher accepts
+    # any of those and silently does nothing, which is why this took finding.
+    case "${2-status}" in
+      on|off)
+        # `enabled` is DPMS itself -- the power saving -- not the display, so
+        # it is inverted from the word this script takes: `dpms off` blanks the
+        # screen and sends enabled = true. Getting this the wrong way round is
+        # invisible from here, because the dispatcher answers "ok" either way.
+        # The only symptom is monitors still awake in the morning, which reads
+        # like the idle timer never fired rather than like it fired and turned
+        # them back on.
+        want=$([[ "$2" == on ]] && echo false || echo true)
+        if [[ -n "${3-}" ]]; then
+          hyprctl dispatch "hl.dsp.dpms({ enabled = $want, monitor = '$3' })"
+        else
+          hyprctl dispatch "hl.dsp.dpms({ enabled = $want })"
+        fi
+        ;;
+      status)
+        hyprctl monitors -j | jq -r --arg o "${3-}" \
+          '.[] | select($o == "" or .name == $o) | "\(.name)  \(if .dpmsStatus then "on" else "off" end)"'
+        ;;
+      *) echo "mw-monitor: unknown dpms action: $2" >&2; exit 1 ;;
+    esac
+    ;;
+  reload) hyprctl reload ;;
+  *) echo "mw-monitor: unknown subcommand: $1" >&2; exit 1 ;;
+esac

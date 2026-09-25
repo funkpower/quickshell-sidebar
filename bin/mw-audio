@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# mw:summary=Volume, mute and output-sink switching
+# mw:args=volume up|down|<0-100> | mute | mic-mute | menu | output next|list|set <id> | input list|set <id> | apps [--json] | app <match> up|down|<0-100>|mute | status [--json]
+# mw:examples=mw-audio menu | mw-audio volume up | mw-audio apps | mw-audio app zoom 30
+set -euo pipefail
+
+step="${MW_VOLUME_STEP:-5}"
+osd() { qs -c mw ipc call osd audio >/dev/null 2>&1 || true; }
+
+case "${1-status}" in
+  volume)
+    case "${2-}" in
+      up)   pamixer --allow-boost --increase "$step" >/dev/null ;;
+      down) pamixer --allow-boost --decrease "$step" >/dev/null ;;
+      ''|*[!0-9]*) echo "mw-audio: volume needs up, down or 0-100" >&2; exit 1 ;;
+      *)    pamixer --set-volume "$2" >/dev/null ;;
+    esac
+    osd
+    ;;
+  mute)     pamixer --toggle-mute >/dev/null; osd ;;
+  mic-mute) pamixer --default-source --toggle-mute >/dev/null; osd ;;
+  output)
+    case "${2-list}" in
+      list) pactl -f json list sinks | jq -r '.[] | "\(.name)\t\(.description)"' ;;
+      set)  pactl set-default-sink "${3:?sink name required}" ;;
+      next)
+        mapfile -t sinks < <(pactl -f json list sinks | jq -r '.[].name')
+        [[ ${#sinks[@]} -gt 1 ]] || exit 0
+        current="$(pactl get-default-sink)"
+        next_i=0
+        for i in "${!sinks[@]}"; do
+          [[ "${sinks[$i]}" == "$current" ]] && next_i=$(( (i + 1) % ${#sinks[@]} ))
+        done
+        pactl set-default-sink "${sinks[$next_i]}"
+        command -v notify-send >/dev/null && \
+          notify-send -a mw "Audio output" "$(pactl -f json list sinks | jq -r --arg n "${sinks[$next_i]}" '.[]|select(.name==$n)|.description')" || true
+        ;;
+      *) echo "mw-audio: unknown output action: $2" >&2; exit 1 ;;
+    esac
+    ;;
+  menu)
+    # One list with both directions in it. Picking a row switches that device;
+    # the current one is marked so you can see where you are without guessing.
+    cur_sink="$(pactl get-default-sink)"
+    cur_src="$(pactl get-default-source)"
+    {
+      pactl -f json list sinks | jq -r --arg c "$cur_sink" \
+        '.[] | "sink:\(.name)\t\(if .name == $c then "●" else "○" end) OUT  \(.description)"'
+      pactl -f json list sources | jq -r --arg c "$cur_src" \
+        '.[] | select(.monitor_source == null or (.name | endswith(".monitor") | not))
+         | "source:\(.name)\t\(if .name == $c then "●" else "○" end) IN   \(.description)"'
+    } | mw-menu pick "Audio devices" | {
+      read -r choice || exit 0
+      [[ -n "$choice" ]] || exit 0
+      case "$choice" in
+        sink:*)   pactl set-default-sink "${choice#sink:}"
+                  command -v notify-send >/dev/null && notify-send -a mw "Output" "$(pactl -f json list sinks | jq -r --arg n "${choice#sink:}" '.[]|select(.name==$n)|.description')" || true ;;
+        source:*) pactl set-default-source "${choice#source:}"
+                  command -v notify-send >/dev/null && notify-send -a mw "Input" "$(pactl -f json list sources | jq -r --arg n "${choice#source:}" '.[]|select(.name==$n)|.description')" || true ;;
+      esac
+    }
+    ;;
+
+  input)
+    case "${2-list}" in
+      list) pactl -f json list sources | jq -r '.[] | select(.name | endswith(".monitor") | not) | "\(.name)\t\(.description)"' ;;
+      set)  pactl set-default-source "${3:?source name required}" ;;
+      *) echo "mw-audio: unknown input action: $2" >&2; exit 1 ;;
+    esac
+    ;;
+
+  # Per-application volume, the thing KDE's mixer did. PipeWire calls these
+  # sink-inputs: one per stream an application is playing, so a browser with two
+  # noisy tabs shows up twice and each is set separately.
+  apps)
+    streams="$(pactl -f json list sink-inputs | jq -c '[.[] | {
+        id: .index,
+        app: (.properties["application.name"] // .properties["media.name"] // "unknown"),
+        media: (.properties["media.name"] // ""),
+        volume: (.volume | to_entries[0].value.value_percent | rtrimstr("%") | tonumber),
+        muted: .mute }]')"
+    if [[ "${2-}" == "--json" ]]; then
+      printf '%s\n' "$streams"
+    elif [[ "$(jq -r 'length' <<<"$streams")" -eq 0 ]]; then
+      echo "  nothing is playing"
+    else
+      jq -r '.[] | "  \(.id|tostring|.+(" "*(5-length)))\(.app|.+(" "*(24-length)))" +
+             (if .muted then "muted" else "\(.volume)%" end) +
+             (if .media == "" then "" else "   " + .media end)' <<<"$streams"
+    fi
+    ;;
+
+  # <match> is an id, or any case-insensitive part of the application name, so
+  # `mw-audio app zoom 30` works without looking the number up first.
+  app)
+    match="${2:?mw-audio: app needs a stream id or name}"
+    action="${3:?mw-audio: app needs up, down, mute or 0-100}"
+    ids="$(pactl -f json list sink-inputs | jq -r --arg m "$match" '
+      .[] | select((.index|tostring) == $m
+                   or ((.properties["application.name"] // "") | ascii_downcase
+                       | contains($m | ascii_downcase)))
+      | .index')"
+    [[ -n "$ids" ]] || { echo "mw-audio: no stream matching: $match" >&2; exit 1; }
+    while read -r id; do
+      [[ -n "$id" ]] || continue
+      case "$action" in
+        up)   pactl set-sink-input-volume "$id" "+${step}%" ;;
+        down) pactl set-sink-input-volume "$id" "-${step}%" ;;
+        mute) pactl set-sink-input-mute "$id" toggle ;;
+        *[!0-9]*) echo "mw-audio: app needs up, down, mute or 0-100" >&2; exit 1 ;;
+        *)    pactl set-sink-input-volume "$id" "${action}%" ;;
+      esac
+    done <<<"$ids"
+    ;;
+
+  status)
+    if [[ "${2-}" == "--json" ]]; then
+      jq -nc --arg v "$(pamixer --get-volume)" \
+             --arg m "$(pamixer --get-mute)" \
+             --arg mic "$(pamixer --default-source --get-mute)" \
+             --arg sink "$(pactl get-default-sink)" \
+        '{volume:($v|tonumber), muted:($m=="true"), micMuted:($mic=="true"), sink:$sink}'
+    else
+      printf 'volume %s%%  muted=%s  mic-muted=%s\n' \
+        "$(pamixer --get-volume)" "$(pamixer --get-mute)" "$(pamixer --default-source --get-mute)"
+    fi
+    ;;
+  *) echo "mw-audio: unknown subcommand: $1" >&2; exit 1 ;;
+esac

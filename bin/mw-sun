@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+# mw:summary=Sunrise, sunset and civil twilight for this machine's location
+# mw:args=[--json] [--altitude <deg>]
+# mw:examples=mw-sun | mw-sun --json | mw-sun --altitude -12
+#
+# Computed, not fetched. The almanac algorithm below agrees with Open-Meteo to
+# within a minute, and anything that has to decide something every few minutes
+# forever should not stop working because the network is down.
+#
+# Location comes from the file mw-weather already resolves and caches, so there
+# is one answer to "where is this machine" rather than two.
+
+import argparse
+import datetime
+import json
+import math
+import os
+import sys
+
+STATE = os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")) + "/mw"
+LOCATION = os.path.join(STATE, "weather-location")
+
+# The sun's centre is below the horizon at the moment it appears to rise: half
+# a degree of solar radius, plus about 34 arcminutes of atmospheric refraction.
+HORIZON = -0.833
+# Civil twilight. This is what "dusk" means, and roughly when a screen starts
+# to feel too blue.
+CIVIL = -6.0
+
+
+def event(lat, lon, day, altitude_deg, rising):
+    """Almanac for Computers, chapter 6. Returns an aware datetime, or None if
+    the sun never reaches that altitude on this day at this latitude."""
+    zenith = math.radians(90.0 - altitude_deg)
+    lng_hour = lon / 15.0
+    t = day.timetuple().tm_yday + (((6 if rising else 18) - lng_hour) / 24.0)
+
+    mean_anomaly = (0.9856 * t) - 3.289
+    true_long = (
+        mean_anomaly
+        + 1.916 * math.sin(math.radians(mean_anomaly))
+        + 0.020 * math.sin(math.radians(2 * mean_anomaly))
+        + 282.634
+    ) % 360.0
+
+    right_asc = math.degrees(math.atan(0.91764 * math.tan(math.radians(true_long)))) % 360.0
+    # atan collapses the circle to half of it; put the result back in the same
+    # quadrant as the true longitude before converting to hours.
+    right_asc += (math.floor(true_long / 90.0) * 90.0) - (math.floor(right_asc / 90.0) * 90.0)
+    right_asc /= 15.0
+
+    sin_dec = 0.39782 * math.sin(math.radians(true_long))
+    cos_dec = math.cos(math.asin(sin_dec))
+
+    cos_h = (math.cos(zenith) - sin_dec * math.sin(math.radians(lat))) / (
+        cos_dec * math.cos(math.radians(lat))
+    )
+    if cos_h > 1 or cos_h < -1:
+        return None
+
+    hour_angle = math.degrees(math.acos(cos_h))
+    if rising:
+        hour_angle = 360.0 - hour_angle
+
+    mean_time = hour_angle / 15.0 + right_asc - (0.06571 * t) - 6.622
+    utc = (mean_time - lng_hour) % 24.0
+    midnight = datetime.datetime(day.year, day.month, day.day, tzinfo=datetime.timezone.utc)
+    return (midnight + datetime.timedelta(hours=utc)).astimezone()
+
+
+def read_location():
+    try:
+        with open(LOCATION) as fh:
+            parts = fh.readline().split(maxsplit=2)
+        return float(parts[0]), float(parts[1]), (parts[2].strip() if len(parts) > 2 else "")
+    except (OSError, ValueError, IndexError):
+        sys.exit("mw-sun: no location yet — run mw-weather once to resolve one")
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--altitude", type=float, default=CIVIL,
+                    help="sun altitude in degrees that counts as dawn/dusk (default -6, civil twilight)")
+    args = ap.parse_args()
+
+    lat, lon, place = read_location()
+    day = datetime.date.today()
+    now = datetime.datetime.now().astimezone()
+
+    dawn = event(lat, lon, day, args.altitude, True)
+    dusk = event(lat, lon, day, args.altitude, False)
+    sunrise = event(lat, lon, day, HORIZON, True)
+    sunset = event(lat, lon, day, HORIZON, False)
+
+    if dawn is None or dusk is None:
+        # Polar day or polar night: no crossing either way. If the sun also
+        # never rose, it is night; otherwise it never set, so it is day.
+        night = sunrise is None and sunset is None
+    else:
+        night = now >= dusk or now < dawn
+
+    if args.json:
+        print(json.dumps({
+            "night": night,
+            "location": place,
+            "dawn": dawn.isoformat() if dawn else None,
+            "sunrise": sunrise.isoformat() if sunrise else None,
+            "sunset": sunset.isoformat() if sunset else None,
+            "dusk": dusk.isoformat() if dusk else None,
+        }))
+        return
+
+    def clock(value):
+        return value.strftime("%-I:%M %p") if value else "—"
+
+    print(f"  {place}")
+    print(f"  dawn     {clock(dawn)}")
+    print(f"  sunrise  {clock(sunrise)}")
+    print(f"  sunset   {clock(sunset)}")
+    print(f"  dusk     {clock(dusk)}")
+    print(f"  now      {'night' if night else 'day'}")
+
+
+if __name__ == "__main__":
+    main()

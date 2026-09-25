@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# mw:summary=Browse and restore clipboard history
+# mw:args=show | list [--json] | clear
+# mw:examples=mw-clipboard show | mw-clipboard list --json
+set -euo pipefail
+
+case "${1-show}" in
+  show)
+    choice="$(cliphist list | mw-menu pick "Clipboard")" || exit 0
+    [[ -n "$choice" ]] && printf '%s' "$choice" | cliphist decode | wl-copy
+    ;;
+  list)
+    if [[ "${2-}" == "--json" ]]; then
+      cliphist list | jq -Rn '[inputs | split("\t") | {id:.[0], preview:(.[1:]|join("\t"))}]'
+    else
+      cliphist list
+    fi
+    ;;
+  clear) cliphist wipe ;;
+  *) echo "mw-clipboard: unknown subcommand: $1" >&2; exit 1 ;;
+esac
