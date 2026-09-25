@@ -14,6 +14,11 @@ Press **Super+A** and a panel slides in from the right edge of the focused monit
 - **Weather**: current conditions and the next four days from Open-Meteo. No API key.
 - **Notifications**: history, with clear-all.
 
+The lock screen shows the clock over weather, the liturgical day and a calendar.
+The church widget comes from [typikon](https://git.pumpin.online/funkpower/typikon):
+today's feast, season, rank and fast, and the week ahead, for twenty Orthodox
+jurisdictions and four Byzantine Catholic churches.
+
 Click anywhere else, or press Super+A again, and it slides back out.
 
 ## How it fits together
@@ -70,6 +75,7 @@ For the tiles and menus, install what you use:
 | Night light | `hyprsunset` |
 | Clipboard history | `cliphist`, `wl-clipboard` |
 | Capture | `grim`, `slurp`, `satty`, `hyprpicker`, `gpu-screen-recorder`, `tesseract` (OCR) |
+| Church widget | [`typikon`](https://git.pumpin.online/funkpower/typikon): `cargo install --git https://git.pumpin.online/funkpower/typikon` |
 | Monitor brightness | `ddcutil`, the `i2c-dev` module, and membership of the `i2c` group |
 | Bluetooth, mixer, Wi-Fi tiles | `ghostty` running `bluetui`, `wiremix`, `impala` |
 
@@ -122,6 +128,9 @@ mw-weather --set-location "Chicago, Illinois"
 - **HDR**: the HDR tile acts on the focused monitor. Set `MW_HDR_OUTPUT=DP-1`
   (for example) to pin it to one output.
 - **Units**: `MW_WEATHER_UNITS=celsius` and `MW_WEATHER_WIND=kmh`.
+- **Church calendar**: set `churchJurisdiction` in `Config.qml` (see `typikon --list`),
+  or leave it empty and run `typikon --set-default <jurisdiction>`.
+  `churchTypikonFast` shows the Typikon's full fasting discipline.
 - **Idle timers and lock screen widgets**: `Config.qml`.
 
 ## License

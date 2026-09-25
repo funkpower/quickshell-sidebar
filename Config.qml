@@ -16,6 +16,15 @@ Singleton {
     readonly property string dateTimeFormat: "ddd d MMM  h:mm AP"
     readonly property string dateFormat:     "dddd d MMMM"
 
+    // Which church's reckoning the church widget keeps. Empty follows whatever
+    // `typikon --set-default` wrote; `typikon --list` has every jurisdiction.
+    readonly property string churchJurisdiction: ""
+
+    // Show the day at the Typikon's full discipline rather than only what your
+    // church's particular law requires. Obligations are still reported and
+    // still marked: this changes what is *kept*, not what binds.
+    readonly property bool churchTypikonFast: false
+
     readonly property int    idleLockMs:  600000
     // Blanking comes after the lock, not instead of it: the screens go dark a
     // few minutes later so a glance at a locked desk still shows the clock.
@@ -26,7 +35,7 @@ Singleton {
     // is locked, so keep it to ambient information.
     readonly property int  widgetWidth:   430
     readonly property var  lockLayout: [
-        ["WeatherWidget"], ["CalendarWidget"]
+        ["WeatherWidget"], ["ChurchWidget"], ["CalendarWidget"]
     ]
 
     // How far the lock screen pulls the wallpaper down behind the widgets.

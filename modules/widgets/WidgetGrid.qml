@@ -27,10 +27,12 @@ Item {
 
     Component { id: c_clock;    ClockWidget {} }
     Component { id: c_weather;  WeatherWidget {} }
+    Component { id: c_church;   ChurchWidget {} }
     Component { id: c_calendar; CalendarWidget {} }
 
     readonly property var widgets: ({
-        "ClockWidget": c_clock, "WeatherWidget": c_weather, "CalendarWidget": c_calendar
+        "ClockWidget": c_clock, "WeatherWidget": c_weather,
+        "ChurchWidget": c_church, "CalendarWidget": c_calendar
     })
 
     RowLayout {
