@@ -29,6 +29,10 @@ Singleton {
     // Blanking comes after the lock, not instead of it: the screens go dark a
     // few minutes later so a glance at a locked desk still shows the clock.
     readonly property int    idleBlankMs: 900000
+    // How long the lock screen stays lit with nobody at it. Counted from the
+    // moment of locking, and blind to idle inhibitors: a video left playing
+    // behind the lock has no one watching it.
+    readonly property int    lockBlankMs: 300000
 
     // Lock screen widgets. Names are the component files in modules/widgets.
     // Whatever is here is legible to anyone standing at the machine while it

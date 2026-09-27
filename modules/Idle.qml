@@ -36,4 +36,29 @@ Singleton {
         timeout: Config.idleBlankMs / 1000
         onIsIdleChanged: if (isIdle) Hypr.exec(["mw-monitor", "dpms", "off"])
     }
+
+    // The same, on the lock screen, where it has to be dependable. The monitor
+    // above honours idle inhibitors, so a browser tab or a call holding one
+    // kept a locked desk lit all night; nothing behind a lock is being watched,
+    // so this one ignores them.
+    IdleMonitor {
+        id: lockedBlank
+        enabled: Lock.locked
+        respectInhibitors: false
+        timeout: Config.lockBlankMs / 1000
+        onIsIdleChanged: if (isIdle) Hypr.exec(["mw-monitor", "dpms", "off"])
+    }
+
+    // An idle monitor fires once per idle period. A panel that wakes on its own
+    // — a DisplayPort link retraining, a hotplug — comes back lit with the
+    // period still running and nothing left to fire, so while the locked desk
+    // is idle the blank is asserted again every minute. Input ends the idle
+    // period and with it this timer, so it never fights the compositor waking
+    // the screens for a real keypress.
+    Timer {
+        interval: 60000
+        repeat: true
+        running: Lock.locked && lockedBlank.isIdle
+        onTriggered: Hypr.exec(["mw-monitor", "dpms", "off"])
+    }
 }
