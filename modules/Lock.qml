@@ -23,6 +23,13 @@ Singleton {
         error = ""; pw = ""; locked = true;
     }
 
+    // Config.lockHooks and unlockHooks. Run on the change itself rather than in
+    // lock() and the PAM callback, so every way in and out is covered.
+    onLockedChanged: {
+        for (const argv of (locked ? Config.lockHooks : Config.unlockHooks))
+            Hypr.exec(argv);
+    }
+
     WlSessionLock {
         id: session
         locked: root.locked

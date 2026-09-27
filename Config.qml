@@ -34,6 +34,11 @@ Singleton {
     // behind the lock has no one watching it.
     readonly property int    lockBlankMs: 300000
 
+    // Commands run when the session locks and when it unlocks, each an argv,
+    // in order. For example ["playerctl", "pause"] to stop media on lock.
+    readonly property var lockHooks: []
+    readonly property var unlockHooks: []
+
     // Lock screen widgets. Names are the component files in modules/widgets.
     // Whatever is here is legible to anyone standing at the machine while it
     // is locked, so keep it to ambient information.

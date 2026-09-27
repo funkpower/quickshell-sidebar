@@ -131,6 +131,8 @@ mw-weather --set-location "Chicago, Illinois"
 - **Church calendar**: set `churchJurisdiction` in `Config.qml` (see `typikon --list`),
   or leave it empty and run `typikon --set-default <jurisdiction>`.
   `churchTypikonFast` shows the Typikon's full fasting discipline.
+- **Lock and unlock hooks**: `lockHooks` and `unlockHooks` in `Config.qml`, each a
+  list of commands run in order, such as `["playerctl", "pause"]` on lock.
 - **Idle timers and lock screen widgets**: `Config.qml`.
 
 ## License
