@@ -83,11 +83,16 @@ case "${1-list}" in
         # like the idle timer never fired rather than like it fired and turned
         # them back on.
         want=$([[ "$2" == on ]] && echo false || echo true)
-        if [[ -n "${3-}" ]]; then
-          hyprctl dispatch "hl.dsp.dpms({ enabled = $want, monitor = '$3' })"
-        else
-          hyprctl dispatch "hl.dsp.dpms({ enabled = $want })"
-        fi
+        # Only the outputs not already in the state asked for. The lock screen
+        # re-asserts blanking every minute, and on amdgpu each DPMS change is
+        # a real power transition of the display engine; sending one to a
+        # panel that is already dark is churn a flaky link does not need.
+        lit=$([[ "$2" == on ]] && echo false || echo true)
+        hyprctl monitors -j | jq -r --arg o "${3-}" --argjson lit "$lit" \
+          '.[] | select(($o == "" or .name == $o) and .dpmsStatus == $lit) | .name' \
+        | while read -r m; do
+            hyprctl dispatch "hl.dsp.dpms({ enabled = $want, monitor = '$m' })"
+          done
         ;;
       status)
         hyprctl monitors -j | jq -r --arg o "${3-}" \
